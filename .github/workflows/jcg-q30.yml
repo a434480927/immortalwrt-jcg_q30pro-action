@@ -128,6 +128,27 @@ jobs:
         tag_name: build-${{ env.FILE_DATE }}-${{ github.run_number }}
         name: jcg_q30-pro ${{ env.FILE_DATE }} build ${{ github.run_number }}
         body: |
+          ## 中文说明
+
+          本项目为 **JCG Q30 PRO**（MT7981）自动编译的 ImmortalWrt 25.12 固件。
+
+          - 源码：chasey-dev/immortalwrt-mt798x-rebase（25.12 分支）
+          - 目标：mediatek/filogic `jcg_q30-pro`（OpenWrt U-Boot / 112M UBI 布局）
+          - 内容：固件镜像 + 可选 kmod（apk 包）
+
+          ### 刷写步骤
+          1. 先确认 `cat /proc/partitions` 中 `mtdblock4` 为 `114688`（112M）；若为 `113152` 需先刷匹配的 U-Boot。
+          2. 正常升级刷 `immortalwrt-mediatek-filogic-jcg_q30-pro-squashfs-sysupgrade.itb`。
+          3. 变砖救援用 `immortalwrt-mediatek-filogic-jcg_q30-pro-initramfs-recovery.itb`。
+          4. 校验：`sha256sum -c sha256sums`。
+
+          ### 可选 kmod
+          与本次固件同一次构建，内核版本严格匹配：
+          ```sh
+          apk add --allow-untrusted ./kmod-wireguard-*.apk
+          ```
+
+          ---
           Automated build for JCG Q30 PRO
           - source: chasey-dev immortalwrt-mt798x-rebase (25.12)
           - target: mediatek/filogic jcg_q30-pro
