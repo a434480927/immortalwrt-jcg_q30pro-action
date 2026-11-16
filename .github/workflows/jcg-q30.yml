@@ -16,6 +16,9 @@ on:
   repository_dispatch:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 env:
   REPO_URL: https://github.com/chasey-dev/immortalwrt-mt798x-rebase.git
   REPO_BRANCH: 25.12
@@ -98,9 +101,10 @@ jobs:
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
-        rm -rf packages
+        echo "FILE_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "KOMDS=$PWD/packages" >> $GITHUB_ENV
 
     - name: Upload firmware directory
       uses: actions/upload-artifact@main
@@ -109,6 +113,31 @@ jobs:
         name: OpenWrt_firmware${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
+    - name: Upload kmods
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: kmods${{ env.FILE_DATE }}
+        path: ${{ env.KOMDS }}
+        if-no-files-found: ignore
+
+    - name: Publish release
+      uses: softprops/action-gh-release@v2
+      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        tag_name: build-${{ env.FILE_DATE }}-${{ github.run_number }}
+        name: jcg_q30-pro ${{ env.FILE_DATE }} build ${{ github.run_number }}
+        body: |
+          Automated build for JCG Q30 PRO
+          - source: chasey-dev immortalwrt-mt798x-rebase (25.12)
+          - target: mediatek/filogic jcg_q30-pro
+          - contents: firmware images and optional kmod apk packages
+        files: |
+          ${{ env.FIRMWARE }}/*
+          ${{ env.KOMDS }}/*
+        fail_on_unmatched_files: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@main
