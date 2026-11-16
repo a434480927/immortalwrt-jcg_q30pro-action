@@ -6,6 +6,7 @@
 - 通过ssh连接进路由器 执行
   ```bash
   cat /proc/partitions
+  ```
 - 查看mtdblock4分区大小
 - 如果是114688k 免更新uboot 直接刷入
 - 如果是113152k或其他 必须刷入下方推荐的uboot或编译出来的uboot（仅TFTP无web） 在uboot刷写sysupgrade
@@ -14,8 +15,26 @@
 - 用uboot启动 上传 sysupgrade 固件 并刷写即可
 
 ## 怎么下载编译好的？
-- 比较懒 编译完成不会自动推Release 点击 Actions -> jcg-q30 immortalwrt-mt798x Builder -> Artifacts -> 下载最新的即可
-- immortalwrt-mediatek-filogic-jcg_q30-pro-squashfs-sysupgrade 正常刷这个
+
+编译完成后会**自动发布 Release**（附件含固件与可选 kmod，长期有效），同时保留 Actions Artifact。
+
+**方式一：Release（推荐）**
+- 打开 `Releases`，下载最新的 `build-<日期>-<编号>`
+- 正常刷写：`immortalwrt-mediatek-filogic-jcg_q30-pro-squashfs-sysupgrade.itb`
+- 救砖用：`immortalwrt-mediatek-filogic-jcg_q30-pro-initramfs-recovery.itb`
+- 校验：下载 `sha256sums` 后执行 `sha256sum -c sha256sums`
+
+**方式二：Actions Artifact（保留 90 天）**
+- `Actions` → `jcg-q30 immortalwrt-mt798x Builder` → 最近一次运行 → 页面底部
+- `OpenWrt_firmware<日期>`：固件目录
+- `kmods<日期>`：可单独安装的 kmod（与固件同一次构建，内核版本严格匹配）
+
+**可选 kmod 安装**
+```sh
+apk add --allow-untrusted ./kmod-wireguard-*.apk
+```
+
+> 注意：kmod 必须与固件来自同一次构建，否则会因内核版本不匹配而拒绝安装。
 
 ---
 
