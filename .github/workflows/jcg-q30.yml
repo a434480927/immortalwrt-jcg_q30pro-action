@@ -136,13 +136,36 @@ jobs:
           - 目标：mediatek/filogic `jcg_q30-pro`（OpenWrt U-Boot / 112M UBI 布局）
           - 内容：固件镜像 + 可选 kmod（apk 包）
 
-          ### 本次改动（2026-11-17）
-          - 内核开启 BTF 类型信息：`CONFIG_DEBUG_INFO_BTF=y`、`CONFIG_DEBUG_INFO_BTF_MODULES=y`
-          - CI 构建依赖新增 `dwarves`（提供 `pahole`，生成 BTF 必需）
-          - 目的：让固件支持 honk、dae 等 eBPF 代理内核（此前内核无 BTF，`/sys/kernel/btf/vmlinux` 不存在，eBPF 程序无法启动）
-          - `kmod-veth` 已在配置中启用（`=m`），满足 honk 的内核模块依赖
-          - 刷入后验证：`ls -l /sys/kernel/btf/vmlinux` 有该文件即生效
-          - 提示：内核体积约增加 3–6 MiB 属正常；安装 honk 时 dae 源需写死 `25.12`，且其面板默认 9090 端口需避免与 mihomo/nikki 冲突
+          ### honk 依赖支持（本固件已全部内置）
+          本固件已内置 **honk（eBPF 代理内核）运行所需的全部依赖**，无需再手动解包安装：
+
+          - 内核 BTF：`/sys/kernel/btf/vmlinux`（`CONFIG_DEBUG_INFO_BTF=y`、`CONFIG_DEBUG_INFO_BTF_MODULES=y`）
+          - `kmod-nfnetlink-queue`：NFQUEUE 子系统（`nfnetlink_queue.ko`）
+          - `kmod-nft-queue`：nftables `queue` 表达式（`nft_queue.ko`）
+          - `kmod-sched-bpf`：`cls_bpf.ko`、`act_bpf.ko`
+          - `kmod-sched-core`：`sch_ingress.ko`（提供 clsact qdisc，eBPF TC 重定向数据路径）
+          - `kmod-veth`：honk 数据路径所需虚拟网卡
+          - `ip-full`：已用 `ip-full` 替换默认的 `ip-tiny`
+
+          因此可直接从 daeuniverse 源安装：
+
+          ```sh
+          FEED=https://openwrt.daeuniverse.org/25.12
+          mkdir -p /etc/apk/repositories.d
+          echo "@daeuniverse $FEED/packages/aarch64_cortex-a53/packages.adb" > /etc/apk/repositories.d/daeuniverse.list
+          wget -O /etc/apk/keys/daeuniverse.pem https://openwrt.daeuniverse.org/public-key.pem
+          apk update
+          apk add honk@daeuniverse luci-app-honk@daeuniverse
+          ```
+
+          注意：源地址必须写 `25.12`（不要带 `-SNAPSHOT`），否则索引下载失败。
+
+          ### 本次改动（2026-11-18）
+          - 勾选 honk 依赖的 kmod 包：`kmod-nfnetlink-queue`、`kmod-nft-queue`、`kmod-sched-bpf`
+          - 用 `ip-full` 替代 `ip-tiny`（`# CONFIG_PACKAGE_ip-tiny is not set`）
+          - 保留内核 BTF 支持（`CONFIG_DEBUG_INFO_BTF=y` 等，用于 honk、dae 等 eBPF 程序）
+          - 验证方式：刷入后 `lsmod | grep -E 'nft_queue|nfnetlink_queue|cls_bpf|act_bpf'` 均能加载，`ls -l /sys/kernel/btf/vmlinux` 存在
+          - 提示：honk 面板默认 9090 端口，需避免与 mihomo/nikki 冲突
 
           ### 刷写步骤
           1. 先确认 `cat /proc/partitions` 中 `mtdblock4` 为 `114688`（112M）；若为 `113152` 需先刷匹配的 U-Boot。
