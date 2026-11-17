@@ -136,6 +136,14 @@ jobs:
           - 目标：mediatek/filogic `jcg_q30-pro`（OpenWrt U-Boot / 112M UBI 布局）
           - 内容：固件镜像 + 可选 kmod（apk 包）
 
+          ### 本次改动（2026-11-17）
+          - 内核开启 BTF 类型信息：`CONFIG_DEBUG_INFO_BTF=y`、`CONFIG_DEBUG_INFO_BTF_MODULES=y`
+          - CI 构建依赖新增 `dwarves`（提供 `pahole`，生成 BTF 必需）
+          - 目的：让固件支持 honk、dae 等 eBPF 代理内核（此前内核无 BTF，`/sys/kernel/btf/vmlinux` 不存在，eBPF 程序无法启动）
+          - `kmod-veth` 已在配置中启用（`=m`），满足 honk 的内核模块依赖
+          - 刷入后验证：`ls -l /sys/kernel/btf/vmlinux` 有该文件即生效
+          - 提示：内核体积约增加 3–6 MiB 属正常；安装 honk 时 dae 源需写死 `25.12`，且其面板默认 9090 端口需避免与 mihomo/nikki 冲突
+
           ### 刷写步骤
           1. 先确认 `cat /proc/partitions` 中 `mtdblock4` 为 `114688`（112M）；若为 `113152` 需先刷匹配的 U-Boot。
           2. 正常升级刷 `immortalwrt-mediatek-filogic-jcg_q30-pro-squashfs-sysupgrade.itb`。
