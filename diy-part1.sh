@@ -16,3 +16,9 @@
 # Add a feed source
 #echo 'src-git helloworld https://github.com/fw876/helloworld' >>feeds.conf.default
 #echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall' >>feeds.conf.default
+
+# Enable kernel BTF (required by eBPF proxy cores such as honk/dae)
+cat >> target/linux/mediatek/filogic/config-6.12 <<'EOF'
+CONFIG_DEBUG_INFO_BTF=y
+CONFIG_DEBUG_INFO_BTF_MODULES=y
+EOF
