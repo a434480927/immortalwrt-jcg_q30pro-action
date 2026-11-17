@@ -18,3 +18,8 @@
 
 # Modify hostname
 #sed -i 's/OpenWrt/P3TERX-Router/g' package/base-files/files/bin/config_generate
+
+# Verify kernel BTF settings present in firmware config (visible in CI log)
+echo "=== BTF verification in .config ==="
+grep -E 'KERNEL_DEBUG_INFO' .config || echo "WARNING: no KERNEL_DEBUG_INFO* lines in .config"
+echo "=== end BTF verification ==="
