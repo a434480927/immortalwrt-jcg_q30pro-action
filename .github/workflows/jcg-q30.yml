@@ -30,13 +30,6 @@ env:
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
-  # ---- ccache ----
-  # 缓存目录必须落在 workspace 内：runner 上该路径跨运行固定，才能命中 actions/cache
-  CCACHE_DIR: ${{ github.workspace }}/.ccache
-  # 缓存上限，配合仓库 10G 缓存配额（每次构建最多占 2G）
-  CCACHE_MAXSIZE: 2G
-  # 换了源码分支 / 工具链大改后想让缓存整体失效，把版本号 +1 即可
-  CACHE_VERSION: v1
 
 jobs:
   build:
@@ -54,15 +47,6 @@ jobs:
         echo "FILE_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
         echo "BUILD_TIME=$(date '+%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_ENV
         echo "SHORT_SHA=${GITHUB_SHA:0:7}" >> $GITHUB_ENV
-
-    # 滚动缓存：key 带 run_id 保证每次都能写入新缓存，restore-keys 命中最近一次
-    - name: Restore ccache
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.CCACHE_DIR }}
-        key: ccache-${{ env.CACHE_VERSION }}-${{ env.REPO_BRANCH }}-${{ github.run_id }}
-        restore-keys: |
-          ccache-${{ env.CACHE_VERSION }}-${{ env.REPO_BRANCH }}-
 
     - name: Initialization environment
       env:
@@ -102,11 +86,6 @@ jobs:
       run: |
         [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-        # 启用 ccache。源码 rules.mk 里 ccache 由 CONFIG_CCACHE 打开，
-        # 并且 CCACHE_DIR 被 CONFIG_CCACHE_DIR 覆盖（环境变量不生效），
-        # 默认值 $(TOPDIR)/.ccache 在 /workdir 下，不在缓存路径内，所以必须显式指定
-        echo "CONFIG_CCACHE=y" >> openwrt/.config
-        echo "CONFIG_CCACHE_DIR=\"$CCACHE_DIR\"" >> openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
@@ -118,14 +97,6 @@ jobs:
         make defconfig
         make download -j16
 
-    # defconfig 之后确认 ccache 配置没被丢弃（丢了会静默退化为无缓存全量编译）
-    - name: Verify ccache configuration
-      run: |
-        echo "=== CONFIG_CCACHE* in .config (after defconfig) ==="
-        grep -E '^CONFIG_CCACHE' openwrt/.config || echo "WARNING: CONFIG_CCACHE* missing, ccache will NOT be used"
-        echo "CCACHE_DIR=$CCACHE_DIR"
-        du -sh "$CCACHE_DIR" 2>/dev/null || echo "cache dir not created yet"
-
     - name: Compile the firmware
       id: compile
       run: |
@@ -133,14 +104,6 @@ jobs:
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: ccache statistics
-      if: always()
-      run: |
-        CCACHE_BIN=/workdir/openwrt/staging_dir/host/bin/ccache
-        [ -x "$CCACHE_BIN" ] || CCACHE_BIN=ccache
-        "$CCACHE_BIN" --show-stats || true
-        du -sh "$CCACHE_DIR" 2>/dev/null || true
 
     - name: Organize files
       id: organize
@@ -182,7 +145,6 @@ jobs:
           - 构建配置提交：`${{ env.SHORT_SHA }}`
           - 目标：mediatek/filogic `jcg_q30-pro`（OpenWrt U-Boot / 112M UBI 布局）
           - 内容：固件镜像 + 可选 kmod（apk 包）
-          - 编译方式：GitHub Actions + ccache
 
           ### honk 依赖支持（本固件已全部内置）
           本固件已内置 **honk（eBPF 代理内核）运行所需的全部依赖**，无需再手动解包安装：
