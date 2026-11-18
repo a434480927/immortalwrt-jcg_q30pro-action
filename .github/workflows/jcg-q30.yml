@@ -30,6 +30,13 @@ env:
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
+  # ---- ccache ----
+  # 缓存目录必须落在 workspace 内：runner 上该路径跨运行固定，才能命中 actions/cache
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  # 缓存上限，配合仓库 10G 缓存配额（每次构建最多占 2G）
+  CCACHE_MAXSIZE: 2G
+  # 换了源码分支 / 工具链大改后想让缓存整体失效，把版本号 +1 即可
+  CACHE_VERSION: v1
 
 jobs:
   build:
@@ -38,6 +45,24 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@main
+
+    # 构建元数据统一在此生成：TZ 已由 workflow env 设为 Asia/Shanghai，
+    # tag、产物名、Release 说明共用同一组值，避免长编译跨零点导致日期不一致
+    - name: Prepare build metadata
+      run: |
+        echo "BUILD_DATE=$(date +%Y-%m-%d)" >> $GITHUB_ENV
+        echo "FILE_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
+        echo "BUILD_TIME=$(date '+%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_ENV
+        echo "SHORT_SHA=${GITHUB_SHA:0:7}" >> $GITHUB_ENV
+
+    # 滚动缓存：key 带 run_id 保证每次都能写入新缓存，restore-keys 命中最近一次
+    - name: Restore ccache
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key: ccache-${{ env.CACHE_VERSION }}-${{ env.REPO_BRANCH }}-${{ github.run_id }}
+        restore-keys: |
+          ccache-${{ env.CACHE_VERSION }}-${{ env.REPO_BRANCH }}-
 
     - name: Initialization environment
       env:
@@ -77,6 +102,11 @@ jobs:
       run: |
         [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        # 启用 ccache。源码 rules.mk 里 ccache 由 CONFIG_CCACHE 打开，
+        # 并且 CCACHE_DIR 被 CONFIG_CCACHE_DIR 覆盖（环境变量不生效），
+        # 默认值 $(TOPDIR)/.ccache 在 /workdir 下，不在缓存路径内，所以必须显式指定
+        echo "CONFIG_CCACHE=y" >> openwrt/.config
+        echo "CONFIG_CCACHE_DIR=\"$CCACHE_DIR\"" >> openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
@@ -88,6 +118,14 @@ jobs:
         make defconfig
         make download -j16
 
+    # defconfig 之后确认 ccache 配置没被丢弃（丢了会静默退化为无缓存全量编译）
+    - name: Verify ccache configuration
+      run: |
+        echo "=== CONFIG_CCACHE* in .config (after defconfig) ==="
+        grep -E '^CONFIG_CCACHE' openwrt/.config || echo "WARNING: CONFIG_CCACHE* missing, ccache will NOT be used"
+        echo "CCACHE_DIR=$CCACHE_DIR"
+        du -sh "$CCACHE_DIR" 2>/dev/null || echo "cache dir not created yet"
+
     - name: Compile the firmware
       id: compile
       run: |
@@ -96,12 +134,19 @@ jobs:
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
 
+    - name: ccache statistics
+      if: always()
+      run: |
+        CCACHE_BIN=/workdir/openwrt/staging_dir/host/bin/ccache
+        [ -x "$CCACHE_BIN" ] || CCACHE_BIN=ccache
+        "$CCACHE_BIN" --show-stats || true
+        du -sh "$CCACHE_DIR" 2>/dev/null || true
+
     - name: Organize files
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
-        echo "FILE_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "KOMDS=$PWD/packages" >> $GITHUB_ENV
@@ -132,9 +177,12 @@ jobs:
 
           本项目为 **JCG Q30 PRO**（MT7981）自动编译的 ImmortalWrt 25.12 固件。
 
-          - 源码：chasey-dev/immortalwrt-mt798x-rebase（25.12 分支）
+          - 构建时间：${{ env.BUILD_TIME }}
+          - 源码：chasey-dev/immortalwrt-mt798x-rebase（${{ env.REPO_BRANCH }} 分支）
+          - 构建配置提交：`${{ env.SHORT_SHA }}`
           - 目标：mediatek/filogic `jcg_q30-pro`（OpenWrt U-Boot / 112M UBI 布局）
           - 内容：固件镜像 + 可选 kmod（apk 包）
+          - 编译方式：GitHub Actions + ccache
 
           ### honk 依赖支持（本固件已全部内置）
           本固件已内置 **honk（eBPF 代理内核）运行所需的全部依赖**，无需再手动解包安装：
@@ -160,10 +208,10 @@ jobs:
 
           注意：源地址必须写 `25.12`（不要带 `-SNAPSHOT`），否则索引下载失败。
 
-          ### 本次改动（2026-11-18）
-          - 勾选 honk 依赖的 kmod 包：`kmod-nfnetlink-queue`、`kmod-nft-queue`、`kmod-sched-bpf`
+          ### 本版配置要点
+          - honk 依赖的 kmod：`kmod-nfnetlink-queue`、`kmod-nft-queue`、`kmod-sched-bpf`（配套 `kmod-sched-core`、`kmod-veth`）
           - 用 `ip-full` 替代 `ip-tiny`（`# CONFIG_PACKAGE_ip-tiny is not set`）
-          - 保留内核 BTF 支持（`CONFIG_DEBUG_INFO_BTF=y` 等，用于 honk、dae 等 eBPF 程序）
+          - 保留内核 BTF 支持（`CONFIG_KERNEL_DEBUG_INFO=y`、`DEBUG_INFO_BTF`、`DEBUG_INFO_BTF_MODULES`，并关闭 `DEBUG_INFO_REDUCED`，否则 BTF 会被 Kconfig 静默丢弃）
           - 验证方式：刷入后 `lsmod | grep -E 'nft_queue|nfnetlink_queue|cls_bpf|act_bpf'` 均能加载，`ls -l /sys/kernel/btf/vmlinux` 存在
           - 提示：honk 面板默认 9090 端口，需避免与 mihomo/nikki 冲突
 
@@ -184,6 +232,7 @@ jobs:
           - source: chasey-dev immortalwrt-mt798x-rebase (25.12)
           - target: mediatek/filogic jcg_q30-pro
           - contents: firmware images and optional kmod apk packages
+          - build time: ${{ env.BUILD_TIME }} / commit ${{ env.SHORT_SHA }}
         files: |
           ${{ env.FIRMWARE }}/*
           ${{ env.KOMDS }}/*
