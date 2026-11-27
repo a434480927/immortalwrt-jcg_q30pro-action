@@ -8,6 +8,7 @@ on:
     paths:
       - '.github/workflows/n60pro.yml'
       - 'diy-n60pro.sh'
+      - 'mt7986-ax6000-n60pro.config'
 
 permissions:
   contents: write
@@ -16,7 +17,7 @@ env:
   REPO_URL: https://github.com/chasey-dev/immortalwrt-mt798x-rebase.git
   REPO_BRANCH: 25.12
   FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: no-config-file
+  CONFIG_FILE: mt7986-ax6000-n60pro.config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-n60pro.sh
   UPLOAD_BIN_DIR: true
@@ -135,10 +136,10 @@ jobs:
           本项目为 **Netcore N60 Pro**（MT7986A / 512MB DDR4 / 128MB SPI-NAND / AX6000）自动编译的 ImmortalWrt 25.12 固件。
 
           - 构建时间：${{ env.BUILD_TIME }}
-          - 源码：chasey-dev/immortalwrt-mt798x-rebase（25.12 分支，HEAD 458d2f7e）
+          - 源码：chasey-dev/immortalwrt-mt798x-rebase（25.12 分支）
           - 构建配置提交：`${{ env.SHORT_SHA }}`
           - 目标：mediatek/filogic `netcore_n60-pro`（MTK 闭源无线驱动，4x4 + 4x4 / 160MHz）
-          - 配置基座：`defconfig/mt7986-ax6000.config`（仅保留 N60 Pro 单设备）
+          - 仓库配置文件：`mt7986-ax6000-n60pro.config`
 
           ### 固件前置条件（必须）
           本固件使用 **OpenWrt U-Boot（ubootmod）布局**，分区为：
@@ -146,7 +147,7 @@ jobs:
 
           对应的 U-Boot FIP：`fip-mt7986_netcore_n60-pro_SP2-Yuzhii-dhcpd-fit_md5-0ed3d54745cf5c17523060f4c57084ca.bin`
 
-          如果设备仍是原厂引导，请先刷入上述 FIP，再刷本固件。
+          如果设备仍是原厂引导，请先刷入上述 FIP，再刷本固件。注意：不要刷本仓库发布页里那个 `bl31-uboot.fip`（它没有内置 bootcmd/glbtn 默认值）。
 
           ### 刷写步骤
           1. U-Boot 恢复页（http://192.168.1.1）上传 `immortalwrt-mediatek-filogic-netcore_n60-pro-squashfs-sysupgrade.itb`
@@ -164,6 +165,7 @@ jobs:
           Automated build for Netcore N60 Pro
           - source: chasey-dev immortalwrt-mt798x-rebase (25.12)
           - target: mediatek/filogic netcore_n60-pro
+          - config: mt7986-ax6000-n60pro.config (ax6000 profile, single device)
           - requires OpenWrt U-Boot (ubootmod) FIT layout
           - build time: ${{ env.BUILD_TIME }} / commit ${{ env.SHORT_SHA }}
         files: |
