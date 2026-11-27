@@ -1,0 +1,180 @@
+name: n60pro immortalwrt-mt798x Builder
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+  push:
+    branches: [ master ]
+    paths:
+      - '.github/workflows/n60pro.yml'
+      - 'diy-n60pro.sh'
+
+permissions:
+  contents: write
+
+env:
+  REPO_URL: https://github.com/chasey-dev/immortalwrt-mt798x-rebase.git
+  REPO_BRANCH: 25.12
+  FEEDS_CONF: feeds.conf.default
+  CONFIG_FILE: no-config-file
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-n60pro.sh
+  UPLOAD_BIN_DIR: true
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@main
+
+    - name: Prepare build metadata
+      run: |
+        echo "BUILD_DATE=$(date +%Y-%m-%d)" >> $GITHUB_ENV
+        echo "FILE_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
+        echo "BUILD_TIME=$(date '+%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_ENV
+        echo "SHORT_SHA=${GITHUB_SHA:0:7}" >> $GITHUB_ENV
+
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev dwarves
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+
+    - name: Clone source code
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+        echo "source commit: $(git -C openwrt rev-parse --short HEAD)"
+
+    - name: Load custom feeds
+      run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: Load custom configuration
+      run: |
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
+
+    - name: Download package
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        make download -j16
+
+    - name: Compile the firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Organize files
+      id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "KOMDS=$PWD/packages" >> $GITHUB_ENV
+        ls -lh
+
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: n60pro_firmware${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
+    - name: Upload kmods
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: n60pro_kmods${{ env.FILE_DATE }}
+        path: ${{ env.KOMDS }}
+        if-no-files-found: ignore
+
+    - name: Publish release
+      uses: softprops/action-gh-release@v2
+      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        tag_name: build-n60pro-${{ env.FILE_DATE }}-${{ github.run_number }}
+        name: n60pro ${{ env.FILE_DATE }} build ${{ github.run_number }}
+        body: |
+          ## 中文说明
+
+          本项目为 **Netcore N60 Pro**（MT7986A / 512MB DDR4 / 128MB SPI-NAND / AX6000）自动编译的 ImmortalWrt 25.12 固件。
+
+          - 构建时间：${{ env.BUILD_TIME }}
+          - 源码：chasey-dev/immortalwrt-mt798x-rebase（25.12 分支，HEAD 458d2f7e）
+          - 构建配置提交：`${{ env.SHORT_SHA }}`
+          - 目标：mediatek/filogic `netcore_n60-pro`（MTK 闭源无线驱动，4x4 + 4x4 / 160MHz）
+          - 配置基座：`defconfig/mt7986-ax6000.config`（仅保留 N60 Pro 单设备）
+
+          ### 固件前置条件（必须）
+          本固件使用 **OpenWrt U-Boot（ubootmod）布局**，分区为：
+          `bl2 1M` / `u-boot-env 512K` / `factory 2M` / `fip 2M` / `ubi 122.5M`。
+
+          对应的 U-Boot FIP：`fip-mt7986_netcore_n60-pro_SP2-Yuzhii-dhcpd-fit_md5-0ed3d54745cf5c17523060f4c57084ca.bin`
+
+          如果设备仍是原厂引导，请先刷入上述 FIP，再刷本固件。
+
+          ### 刷写步骤
+          1. U-Boot 恢复页（http://192.168.1.1）上传 `immortalwrt-mediatek-filogic-netcore_n60-pro-squashfs-sysupgrade.itb`
+          2. 或已进入系统后执行 `sysupgrade -n <镜像>`
+          3. 首次启动会在 ubi 内创建 `fit` / `ubootenv` / `ubootenv2` / `rootfs_data` 卷
+          4. 默认 LAN 地址 `192.168.1.1`，无密码
+          5. 校验：`sha256sum -c sha256sums`
+
+          ### 附件说明
+          - `*-squashfs-sysupgrade.itb`：正常升级用
+          - `*-initramfs-recovery.itb`（如生成）：变砖/救援用，不会写 ubi
+          - `packages/`：与本次内核严格匹配的 kmod（apk 格式），可用于后续补装驱动
+
+          ---
+          Automated build for Netcore N60 Pro
+          - source: chasey-dev immortalwrt-mt798x-rebase (25.12)
+          - target: mediatek/filogic netcore_n60-pro
+          - requires OpenWrt U-Boot (ubootmod) FIT layout
+          - build time: ${{ env.BUILD_TIME }} / commit ${{ env.SHORT_SHA }}
+        files: |
+          ${{ env.FIRMWARE }}/*
+          ${{ env.KOMDS }}/*
+        fail_on_unmatched_files: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Delete workflow runs
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 0
+        keep_minimum_runs: 2
