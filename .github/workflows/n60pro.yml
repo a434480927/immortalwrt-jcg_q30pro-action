@@ -109,6 +109,26 @@ jobs:
         echo "KOMDS=$PWD/packages" >> $GITHUB_ENV
         ls -lh
 
+    - name: Collect optional kmods
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      run: |
+        cd openwrt
+        OPENWRT="$PWD"
+        OUT="$RUNNER_TEMP/optional-kmods"
+        rm -rf "$OUT"
+        mkdir -p "$OUT"
+        # 只收 .config 里以 =m 编出的 kmod（已装进镜像的 =y 模块不再单独发布）
+        for pkg in $(grep -oE '^CONFIG_PACKAGE_kmod-[A-Za-z0-9_.+-]+=m' .config | sed 's/^CONFIG_PACKAGE_//;s/=m$//'); do
+          cp bin/targets/mediatek/filogic/packages/${pkg}-*.apk "$OUT/" 2>/dev/null || true
+        done
+        echo "optional kmods: $(ls -1 "$OUT" | wc -l)"
+        ls -lh "$OUT"
+        APK="$OPENWRT/staging_dir/host/bin/apk"
+        if [ -x "$APK" ]; then
+          ( cd "$OUT" && "$APK" mkndx --root "$OPENWRT" --keys-dir "$OPENWRT" --allow-untrusted --output packages.adb *.apk ) || true
+        fi
+        echo "OPTIONAL_KMODS=$OUT" >> $GITHUB_ENV
+
     - name: Upload firmware directory
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
@@ -121,7 +141,7 @@ jobs:
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         name: n60pro_kmods${{ env.FILE_DATE }}
-        path: ${{ env.KOMDS }}
+        path: ${{ env.OPTIONAL_KMODS }}
         if-no-files-found: ignore
 
     - name: Publish release
@@ -159,7 +179,11 @@ jobs:
           ### 附件说明
           - `*-squashfs-sysupgrade.itb`：正常升级用
           - `*-initramfs-recovery.itb`（如生成）：变砖/救援用，不会写 ubi
-          - `packages/`：与本次内核严格匹配的 kmod（apk 格式），可用于后续补装驱动
+          - 可选 kmod（apk）：只包含本次以 `=m` 单独编出的模块，与本次内核严格匹配；已内置进镜像的模块不再单独提供
+          安装方式（把 apk 与 `packages.adb` 放到路由器同一目录）：
+          ```sh
+          apk add --allow-untrusted --repository ./packages.adb kmod-wireguard
+          ```
 
           ---
           Automated build for Netcore N60 Pro
@@ -170,7 +194,7 @@ jobs:
           - build time: ${{ env.BUILD_TIME }} / commit ${{ env.SHORT_SHA }}
         files: |
           ${{ env.FIRMWARE }}/*
-          ${{ env.KOMDS }}/*
+          ${{ env.OPTIONAL_KMODS }}/*
         fail_on_unmatched_files: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
