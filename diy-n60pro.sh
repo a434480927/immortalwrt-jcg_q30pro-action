@@ -1,25 +1,16 @@
 #!/bin/bash
 #
 # Netcore N60 Pro (MT7986A, 512MB DDR4, 128MB SPI-NAND, AX6000)
-# Profile: mt7986-ax6000 (MTK closed-source wifi), single device build.
+#
+# 固件配置固定在仓库根目录：mt7986-ax6000-n60pro.config
+# （chasey-dev 的 mt7986-ax6000 档裁剪为单设备，并补 LuCI）
+# workflow 会把该文件移到 openwrt/.config，本脚本只做 defconfig 与断言。
 #
 set -e
 
-echo "=== apply mt7986-ax6000 profile, keep only netcore_n60-pro ==="
-cp defconfig/mt7986-ax6000.config .config
+[ -f .config ] || { echo "ERROR: .config not found (repo config not moved)"; exit 1; }
 
-# The stock profile enables every AX6000-class device at once (multi profile).
-# Keep only the N60 Pro so one image is built instead of ~25 rootfs trees.
-sed -i '/^CONFIG_TARGET_DEVICE_/d' .config
-sed -i '/^CONFIG_TARGET_DEVICE_PACKAGES_/d' .config
-cat >> .config <<'EOF'
-CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netcore_n60-pro=y
-CONFIG_TARGET_DEVICE_PACKAGES_mediatek_filogic_DEVICE_netcore_n60-pro=""
-CONFIG_PACKAGE_luci=y
-CONFIG_PACKAGE_luci-app-firewall=y
-CONFIG_PACKAGE_luci-app-package-manager=y
-CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
-EOF
+echo "=== config lines before defconfig: $(grep -c '' .config) ==="
 
 make defconfig
 
