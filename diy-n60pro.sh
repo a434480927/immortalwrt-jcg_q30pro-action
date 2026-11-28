@@ -5,6 +5,7 @@
 # 固件配置固定在仓库根目录：mt7986-ax6000-n60pro.config
 # （chasey-dev 的 mt7986-ax6000 档裁剪为单设备，并补 LuCI / ksmbd / honk 依赖）
 # workflow 会把该文件移到 openwrt/.config，本脚本只做 defconfig 与断言。
+# build trigger: 2026-11-28 release asset fix
 #
 set -e
 
