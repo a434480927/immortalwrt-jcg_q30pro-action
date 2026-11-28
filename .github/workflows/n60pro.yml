@@ -7,6 +7,7 @@ on:
     branches: [ master ]
     paths:
       - '.github/workflows/n60pro.yml'
+      - 'diy-part1.sh'
       - 'diy-n60pro.sh'
       - 'mt7986-ax6000-n60pro.config'
 
@@ -106,26 +107,36 @@ jobs:
         cd openwrt/bin/targets/*/*
         echo "status=success" >> $GITHUB_OUTPUT
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-        echo "KOMDS=$PWD/packages" >> $GITHUB_ENV
         ls -lh
 
     - name: Collect optional kmods
       if: steps.organize.outputs.status == 'success' && !cancelled()
+      shell: bash
       run: |
+        set -euo pipefail
+        shopt -s nullglob
         cd openwrt
         OPENWRT="$PWD"
         OUT="$RUNNER_TEMP/optional-kmods"
         rm -rf "$OUT"
         mkdir -p "$OUT"
-        # 只收 .config 里以 =m 编出的 kmod（已装进镜像的 =y 模块不再单独发布）
+        # 只收 .config 里以 =m 编出的 kmod（用 -[0-9]*.apk 避免短前缀误收子包）
         for pkg in $(grep -oE '^CONFIG_PACKAGE_kmod-[A-Za-z0-9_.+-]+=m' .config | sed 's/^CONFIG_PACKAGE_//;s/=m$//'); do
-          cp bin/targets/mediatek/filogic/packages/${pkg}-*.apk "$OUT/" 2>/dev/null || true
+          for f in bin/targets/mediatek/filogic/packages/${pkg}-[0-9]*.apk; do
+            cp "$f" "$OUT/"
+          done
         done
-        echo "optional kmods: $(ls -1 "$OUT" | wc -l)"
-        ls -lh "$OUT"
-        APK="$OPENWRT/staging_dir/host/bin/apk"
-        if [ -x "$APK" ]; then
-          ( cd "$OUT" && "$APK" mkndx --root "$OPENWRT" --keys-dir "$OPENWRT" --allow-untrusted --output packages.adb *.apk ) || true
+        apks=( "$OUT"/*.apk )
+        echo "optional kmods: ${#apks[@]}"
+        if [ "${#apks[@]}" -gt 0 ]; then
+          ls -lh "$OUT"
+          APK="$OPENWRT/staging_dir/host/bin/apk"
+          if [ ! -x "$APK" ]; then
+            echo "ERROR: host apk tool not found at $APK"
+            exit 1
+          fi
+          ( cd "$OUT" && "$APK" mkndx --root "$OPENWRT" --keys-dir "$OPENWRT" --allow-untrusted --output packages.adb ./*.apk )
+          test -s "$OUT/packages.adb"
         fi
         echo "OPTIONAL_KMODS=$OUT" >> $GITHUB_ENV
 
@@ -161,6 +172,10 @@ jobs:
           - 目标：mediatek/filogic `netcore_n60-pro`（MTK 闭源无线驱动，4x4 + 4x4 / 160MHz）
           - 仓库配置文件：`mt7986-ax6000-n60pro.config`
 
+          ### 已内置功能与依赖
+          - **honk（eBPF 代理内核）运行依赖**：内核 BTF（`/sys/kernel/btf/vmlinux`）、`kmod-nfnetlink-queue`、`kmod-nft-queue`、`kmod-sched-bpf`、`kmod-sched-core`、`kmod-veth`、`ip-full`；另带 `tc-bpf` 便于调试
+          - **USB 存储与 SMB 共享**：`kmod-usb3` + `automount`（自动挂载）+ `ksmbd` + `avahi` + `luci-app-ksmbd`
+
           ### 固件前置条件（必须）
           本固件使用 **OpenWrt U-Boot（ubootmod）布局**，分区为：
           `bl2 1M` / `u-boot-env 512K` / `factory 2M` / `fip 2M` / `ubi 122.5M`。
@@ -193,7 +208,14 @@ jobs:
           - requires OpenWrt U-Boot (ubootmod) FIT layout
           - build time: ${{ env.BUILD_TIME }} / commit ${{ env.SHORT_SHA }}
         files: |
-          ${{ env.FIRMWARE }}/*
+          ${{ env.FIRMWARE }}/*.itb
+          ${{ env.FIRMWARE }}/*.fip
+          ${{ env.FIRMWARE }}/*.bin
+          ${{ env.FIRMWARE }}/*.img
+          ${{ env.FIRMWARE }}/*.manifest
+          ${{ env.FIRMWARE }}/*.json
+          ${{ env.FIRMWARE }}/sha256sums
+          ${{ env.FIRMWARE }}/*.buildinfo
           ${{ env.OPTIONAL_KMODS }}/*
         fail_on_unmatched_files: false
       env:
